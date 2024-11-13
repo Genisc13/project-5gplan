@@ -2,5 +2,8 @@
 This is the 5GPLAN project
 
 ## Test procedure
-The 
+
+The procedure will be as follows:
+
+- 
 ## Change-log
