@@ -4,3 +4,4 @@ class Config:
         self.coverage_radius = 1000  # en metros
         self.base_station_capacity = 10000  # in Mbps
         self.csv_uri = "antennas_kml.csv"
+        self.num_BBU_pools = 20
