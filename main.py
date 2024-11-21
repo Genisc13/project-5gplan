@@ -9,29 +9,33 @@ import folium
 def main():
     # Load general config
     config = Config()
-    # update the value of the antennas
-    df = pd.read_csv(config.csv_uri)  # Use the correct csv
+    # Load the CSV file
+    df = pd.read_csv(config.csv_uri)  # Use the correct CSV
 
-    # Remove rows with missing latitude or longitude
-    df = df.dropna(subset=['ns1:latitude', 'ns1:longitude'])
+    # Remove rows with missing coordinates
+    df = df.dropna(subset=['ns1:coordinates'])
 
-    # Create point geometry
-    geometry = [Point(xy) for xy in zip(df['ns1:longitude'], df['ns1:latitude'])]
-    gdf = gpd.GeoDataFrame(df, geometry=geometry)
+    # Split 'ns1:coordinates' and extract longitude, latitude
+    df[['longitude', 'latitude', 'altitude']] = (
+        df['ns1:coordinates'].str.split(",", expand=True)[[0, 1, 2]].astype(float))
 
-    # Create a map using the average location of the antennas
-    center_lat = df['ns1:latitude'].mean()
-    center_lon = df['ns1:longitude'].mean()
+    # Create point geometry using longitude and latitude
+    geometry = [Point(xy) for xy in zip(df['longitude'], df['latitude'])]
+    gdf = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
+
+    # Calculate center for the map
+    center_lat = df['latitude'].mean()
+    center_lon = df['longitude'].mean()
     initial_map = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
-    # Add every antenna on the map
+    # Add every antenna to the map
     for idx, row in gdf.iterrows():
         folium.Marker(
-            location=[row['ns1:latitude'], row['ns1:longitude']],
-            popup=row['ns1:coordinates']
+            location=[row['latitude'], row['longitude']],
+            popup=f"Name: {row.get('ns1:name8', '')}, Altitude: {row['altitude']} m"
         ).add_to(initial_map)
 
-    # Show the map
+    # Save the map
     initial_map.save("map_antennas.html")
 
 
