@@ -2,12 +2,9 @@ from config import Config
 
 
 class BBUPool:
-    def __init__(self, identification, rrh_map):
+    def __init__(self, identifier, latitude, longitude, connected_rrh):
         config = Config()
-        self.id = identification
-        self.rrh_map = rrh_map
-        self.connected_rrh = self.connect_rrh(config.num_RRHs_per_BBU)
-
-    def connect_rrh_by_distance(self, num_rrh):
-        connected_rrh_s = []
-        return connected_rrh_s
+        self.identifier = identifier
+        self.latitude = latitude
+        self.longitude = longitude
+        self.connected_rrh = connected_rrh

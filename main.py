@@ -5,8 +5,128 @@ from Rrh import RRH
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
+from math import radians, cos, sin, sqrt, atan2
+from sklearn.cluster import KMeans
+import numpy as np
 import random
 import folium
+
+
+def export_bbu_details_to_csv(bbu_pools, output_file="bbu_details.csv"):
+    data = []
+    for pool in bbu_pools:
+        for rrh in pool.connected_rrh:
+            distance = haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude'])
+            data.append({
+                "BBU_ID": pool.identifier,
+                "BBU_Latitude": pool.latitude,
+                "BBU_Longitude": pool.longitude,
+                "RRH_Latitude": rrh['latitude'],
+                "RRH_Longitude": rrh['longitude'],
+                "Distance_meters": distance
+            })
+
+    # Save data to a CSV
+    pd.DataFrame(data).to_csv(output_file, index=False)
+
+
+# Haversine formula to calculate distance between two points
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000  # Radius of the Earth in meters
+    phi1, phi2 = radians(lat1), radians(lat2)
+    delta_phi = radians(lat2 - lat1)
+    delta_lambda = radians(lon2 - lon1)
+
+    # Corrected a formula
+    a = sin(delta_phi / 2.0) ** 2 + cos(phi1) * cos(phi2) * sin(delta_lambda / 2.0) ** 2
+
+    # Compute c
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
+    # Return distance
+    return R * c
+
+
+# Function to place BBU pools
+# def place_bbu_pools(rrhs_df, config):
+#     bbu_pools = []
+#     remaining_rrhs = rrhs_df.copy()
+#     identifier = 1
+#     while not remaining_rrhs.empty and len(bbu_pools) < config.num_BBU_pools:
+#         # Select the first RRH as the base location for the BBU pool
+#         first_rrh = remaining_rrhs.iloc[0]
+#         bbu_location = (first_rrh['latitude'], first_rrh['longitude'])
+#
+#         bbu_pool = BBUPool(identifier, bbu_location[0], bbu_location[1], [])
+#
+#         # Find and connect nearby RRHs
+#         for _, rrh in remaining_rrhs.iterrows():
+#             distance = haversine(bbu_location[0], bbu_location[1], rrh['latitude'], rrh['longitude'])
+#             if distance <= config.coverage_radius and len(bbu_pool.connected_rrh) < config.num_RRHs_per_BBU:
+#                 bbu_pool.connected_rrh.append(rrh)
+#         # Add the new BBU pool to the list
+#         bbu_pools.append(bbu_pool)
+#         identifier += 1
+#         # Remove connected RRHs from the remaining list
+#         connected_indices = [rrh.name for rrh in bbu_pool.connected_rrh]
+#         remaining_rrhs = remaining_rrhs.drop(index=connected_indices)
+#
+#         # Ensure BBU pools are at least 1.5 km apart
+#         for pool in bbu_pools:
+#             for _, rrh in remaining_rrhs.iterrows():
+#                 if haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude']) < 1500:
+#                     remaining_rrhs = remaining_rrhs[remaining_rrhs['latitude'] != rrh['latitude']]
+#
+#     return bbu_pools
+def optimize_bbu_pools_with_constraints(rrhs_df, config):
+    # Step 1: Perform initial clustering with K-Means
+    rrh_coords = rrhs_df[['latitude', 'longitude']].to_numpy()
+    kmeans = KMeans(n_clusters=config.num_BBU_pools, random_state=0).fit(rrh_coords)
+
+    # Initialize BBU pools
+    bbu_pools = []
+    used_rrhs = set()
+
+    for idx, center in enumerate(kmeans.cluster_centers_):
+        # Select RRHs belonging to this cluster
+        cluster_rrhs = rrhs_df[kmeans.labels_ == idx]
+
+        # Step 2: Filter RRHs within coverage radius and respect RRH limit
+        connected_rrhs = []
+        for _, rrh in cluster_rrhs.iterrows():
+            if haversine(center[0], center[1], rrh['latitude'], rrh['longitude']) <= config.coverage_radius:
+                connected_rrhs.append(rrh)
+            if len(connected_rrhs) == config.num_RRHs_per_BBU:
+                break
+
+        # Step 3: Place BBU pool and ensure 1.5km distance constraint
+        bbu_location = adjust_bbu_location(center, bbu_pools, connected_rrhs, config)
+        if len(bbu_location) == 2:
+            # Add new BBU pool
+            bbu_pools.append(BBUPool(
+                identifier=idx + 1,
+                latitude=bbu_location[0],
+                longitude=bbu_location[1],
+                connected_rrh=connected_rrhs
+            ))
+            used_rrhs.update([rrh.name for rrh in connected_rrhs])
+
+    # Remove unused RRHs (those not in any pool)
+    remaining_rrhs = rrhs_df[~rrhs_df.index.isin(used_rrhs)]
+
+    # Optionally: Handle remaining RRHs by assigning to nearby pools if possible
+    return bbu_pools
+
+
+def adjust_bbu_location(center, existing_pools, rrhs, config):
+    """Adjust BBU pool location to ensure it meets the 1.5 km distance constraint."""
+    for pool in existing_pools:
+        if haversine(center[0], center[1], pool.latitude, pool.longitude) < config.distance_between_BBUs:
+            # Shift center slightly (towards weighted centroid of RRHs) to resolve conflict
+            latitudes = [rrh['latitude'] for rrh in rrhs]
+            longitudes = [rrh['longitude'] for rrh in rrhs]
+            return np.mean(latitudes), np.mean(longitudes)
+    return center
 
 
 def randomize_residential_office(config):
@@ -43,6 +163,9 @@ def main():
     geometry = [Point(xy) for xy in zip(df['longitude'], df['latitude'])]
     gdf = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
 
+    rrhs_df = df[['latitude', 'longitude']].copy()
+    # Place the BBU pools
+    bbu_pools = optimize_bbu_pools_with_constraints(rrhs_df, config)
     # Calculate center for the map
     center_lat = df['latitude'].mean()
     # print(center_lat)
@@ -50,10 +173,6 @@ def main():
     # print(center_lon)
     initial_map = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
-    # Add every antenna to the map
-    '''for idx, row in gdf.iterrows():
-        antennas_map.append(RRH(row['latitude'], row['longitude'], row['altitude'],
-                                randomize_residential_office(config), row['ns1:name9']))'''
     for idx, row in gdf.iterrows():
         # print([row['latitude'], row['longitude']])
         folium.Marker(
@@ -62,11 +181,38 @@ def main():
             location=[row['latitude'], row['longitude']],
             popup=f"Name: {row.get('ns1:name9', '')}, Altitude: {row['altitude']} m"
         ).add_to(initial_map)
-    '''for rrh in antennas_map:
-        rrh.marker.add_to(initial_map)'''
+        # Add BBU pools to the map
+    # print(bbu_pools)
+    # Add BBU pools and their connections to RRHs
+    for pool in bbu_pools:
+        # Add BBU pool marker
+        folium.Marker(
+            location=[pool.latitude, pool.longitude],
+            icon=folium.Icon(color="red", icon="server",
+                             prefix="fa", icon_color="black"),
+            popup=f"BBU Pool number {pool.identifier} "
+                  f"with {len(pool.connected_rrh)} RRHs connected"
+        ).add_to(initial_map)
+
+        # Draw polylines from BBU pool to its connected RRHs
+        for rrh in pool.connected_rrh:
+            folium.PolyLine(
+                locations=[
+                    [pool.latitude, pool.longitude],  # BBU pool location
+                    [rrh['latitude'], rrh['longitude']]  # Connected RRH location
+                ],
+                color="blue",  # Line color
+                weight=4,  # Line thickness
+                opacity=0.7,  # Line transparency
+                popup=f"Distance: {haversine(pool.latitude,
+                                             pool.longitude, rrh['latitude'], rrh['longitude'])}"
+            ).add_to(initial_map)
 
     # Save the map
     initial_map.save("map_antennas.html")
+    # Save BBU details to a CSV
+    export_bbu_details_to_csv(bbu_pools, output_file="bbu_details.csv")
+    print("BBU details saved to bbu_details.csv")
 
 
 if __name__ == "__main__":
