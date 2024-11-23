@@ -21,6 +21,7 @@ def export_bbu_details_to_csv(bbu_pools, output_file="bbu_details.csv"):
                 "BBU_ID": pool.identifier,
                 "BBU_Latitude": pool.latitude,
                 "BBU_Longitude": pool.longitude,
+                "RRH_id": rrh['id'],
                 "RRH_Latitude": rrh['latitude'],
                 "RRH_Longitude": rrh['longitude'],
                 "Distance_meters": distance
@@ -164,6 +165,7 @@ def main():
     gdf = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
 
     rrhs_df = df[['latitude', 'longitude']].copy()
+    rrhs_df['id'] = df['ns1:name9']
     # Place the BBU pools
     bbu_pools = optimize_bbu_pools_with_constraints(rrhs_df, config)
     # Calculate center for the map

@@ -7,7 +7,7 @@ class Config:
         self.csv_uri = "antennas_kml_v2.csv"
         self.num_RRHs = 102
         self.num_RRHs_per_BBU = 4
-        self.num_BBU_pools = 60
+        self.num_BBU_pools = 50
         self.percentage_RRH_mixed = 50
         self.percentage_RRH_office = 20
         self.percentage_RRH_residential = 30
