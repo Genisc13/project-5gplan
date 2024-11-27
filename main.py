@@ -79,6 +79,81 @@ def haversine(lat1, lon1, lat2, lon2):
 #                     remaining_rrhs = remaining_rrhs[remaining_rrhs['latitude'] != rrh['latitude']]
 #
 #     return bbu_pools
+def assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config):
+    for _, rrh in remaining_rrhs.iterrows():
+        # Find the nearest BBU pool within coverage radius and with available capacity
+        nearest_bbu = None
+        min_distance = float('inf')
+        for pool in bbu_pools:
+            distance = haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude'])
+            if distance <= config.coverage_radius and len(pool.connected_rrh) < config.num_RRHs_per_BBU:
+                if distance < min_distance:
+                    nearest_bbu = pool
+                    min_distance = distance
+
+        # Assign RRH to the nearest eligible BBU pool
+        if nearest_bbu:
+            nearest_bbu.connected_rrh.append({
+                "id": rrh['id'],
+                "latitude": rrh['latitude'],
+                "longitude": rrh['longitude']
+            })
+
+
+def log_unassigned_rrhs(remaining_rrhs, bbu_pools, config):
+    unassigned_rrhs = []
+    for _, rrh in remaining_rrhs.iterrows():
+        # Check if it is out of range or no slots are available
+        assignable = any(
+            haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude']) <= config.coverage_radius and
+            len(pool.connected_rrh) < config.num_RRHs_per_BBU
+            for pool in bbu_pools
+        )
+        if not assignable:
+            unassigned_rrhs.append(rrh)
+    # Log or return unassigned RRHs for further action
+    return unassigned_rrhs
+
+
+def balance_rrh_distribution(bbu_pools, config):
+    # Step 1: Calculate the target number of RRHs per BBU
+    total_rrhs = sum(len(pool.connected_rrh) for pool in bbu_pools)
+    target_rrhs_per_bbu = min(config.num_RRHs_per_BBU, max(1, int(np.ceil(total_rrhs / len(bbu_pools)))))
+
+    # Step 2: Identify overloaded and underloaded BBUs
+    overloaded_pools = [pool for pool in bbu_pools if len(pool.connected_rrh) > target_rrhs_per_bbu]
+    underloaded_pools = [pool for pool in bbu_pools if len(pool.connected_rrh) < target_rrhs_per_bbu]
+
+    # Step 3: Reassign RRHs to balance the load
+    for overloaded_pool in overloaded_pools:
+        while len(overloaded_pool.connected_rrh) > target_rrhs_per_bbu and underloaded_pools:
+            # Remove excess RRH from overloaded pool
+            rrh_to_reassign = overloaded_pool.connected_rrh.pop()
+
+            # Find a suitable underloaded BBU pool
+            for underloaded_pool in underloaded_pools:
+                distance = haversine(
+                    rrh_to_reassign['latitude'],
+                    rrh_to_reassign['longitude'],
+                    underloaded_pool.latitude,
+                    underloaded_pool.longitude
+                )
+
+                # Check if the RRH can be reassigned to the underloaded pool
+                if (
+                        distance <= config.coverage_radius and
+                        len(underloaded_pool.connected_rrh) < target_rrhs_per_bbu
+                ):
+                    underloaded_pool.connected_rrh.append(rrh_to_reassign)
+                    break
+
+            # Update underloaded pools list
+            underloaded_pools = [
+                pool for pool in underloaded_pools
+                if len(pool.connected_rrh) < target_rrhs_per_bbu
+            ]
+
+
 def optimize_bbu_pools_with_constraints(rrhs_df, config):
     # Step 1: Perform initial clustering with K-Means
     rrh_coords = rrhs_df[['latitude', 'longitude']].to_numpy()
@@ -100,7 +175,7 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
             if len(connected_rrhs) == config.num_RRHs_per_BBU:
                 break
 
-        # Step 3: Place BBU pool and ensure 1.5km distance constraint
+        # Step 3: Place BBU pool and ensure 1km distance constraint
         bbu_location = adjust_bbu_location(center, bbu_pools, connected_rrhs, config)
         if len(bbu_location) == 2:
             # Add new BBU pool
@@ -116,6 +191,11 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
     remaining_rrhs = rrhs_df[~rrhs_df.index.isin(used_rrhs)]
 
     # Optionally: Handle remaining RRHs by assigning to nearby pools if possible
+    assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config)
+    remaining_rrhs = rrhs_df[~rrhs_df.index.isin(used_rrhs)]
+    # Balance rrh distribution
+    balance_rrh_distribution(bbu_pools, config)
+    print("The number of unassigned rrhs is: ", len(log_unassigned_rrhs(remaining_rrhs, bbu_pools, config)))
     return bbu_pools
 
 
