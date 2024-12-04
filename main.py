@@ -22,11 +22,19 @@ def plot_rrhs_per_bbu(bbu_pools):
     rrh_counts = [len(pool.connected_rrh) for pool in bbu_pools]
 
     plt.figure(figsize=(10, 6))
-    plt.bar(bbu_ids, rrh_counts, color='skyblue')
+    plt.bar(bbu_ids, rrh_counts, color='orange', edgecolor='black')
     plt.xlabel('BBU ID')
     plt.ylabel('Number of Connected RRHs')
     plt.title('Number of RRHs Connected to Each BBU')
     plt.xticks(bbu_ids)
+    plt.show()
+
+
+def plot_rrh_type_distribution(df):
+    # Pie chart
+    df['type'].value_counts().plot(kind='pie', autopct='%1.1f%%', colors=['orange', 'blue', 'green'])
+    plt.title('RRH Type Distribution')
+    plt.ylabel('')
     plt.show()
 
 
@@ -39,7 +47,7 @@ def plot_distance_histogram(bbu_pools):
             distances.append(dist)
 
     plt.figure(figsize=(10, 6))
-    plt.hist(distances, bins=20, color='orange', edgecolor='black')
+    plt.hist(distances, bins=40, color='orange', edgecolor='black')
     plt.xlabel('Distance (meters)')
     plt.ylabel('Frequency')
     plt.title('Distribution of Distances Between BBUs and Connected RRHs')
@@ -71,7 +79,7 @@ def plot_distance_boxplot(bbu_pools):
                  for pool in bbu_pools}
 
     distance_df = pd.DataFrame(dict([(key, pd.Series(value)) for key, value in distances.items()]))
-    distance_df.boxplot(figsize=(12, 6), grid=False)
+    distance_df.boxplot(figsize=(12, 6), grid=True)
     plt.xlabel('BBU ID')
     plt.ylabel('Distance (meters)')
     plt.title('Distance Variability Between BBUs and Connected RRHs')
@@ -81,6 +89,7 @@ def plot_distance_boxplot(bbu_pools):
 # Export to csv
 def export_bbu_details_to_csv(bbu_pools, output_file="bbu_details.csv"):
     data = []
+    # print("hello")
     for pool in bbu_pools:
         for rrh in pool.connected_rrh:
             distance = haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude'])
@@ -91,6 +100,7 @@ def export_bbu_details_to_csv(bbu_pools, output_file="bbu_details.csv"):
                 "RRH_id": rrh['id'],
                 "RRH_Latitude": rrh['latitude'],
                 "RRH_Longitude": rrh['longitude'],
+                "RRH_Type": rrh['type'],
                 "Distance_meters": distance
             })
 
@@ -116,6 +126,7 @@ def haversine(lat1, lon1, lat2, lon2):
 
 
 def assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config):
+    assigned_rrh = 0
     for _, rrh in remaining_rrhs.iterrows():
         # Find the nearest BBU pool within coverage radius and with available capacity
         nearest_bbu = None
@@ -129,11 +140,10 @@ def assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config):
 
         # Assign RRH to the nearest eligible BBU pool
         if nearest_bbu:
-            nearest_bbu.connected_rrh.append({
-                "id": rrh['id'],
-                "latitude": rrh['latitude'],
-                "longitude": rrh['longitude']
-            })
+            nearest_bbu.connected_rrh.append(rrh)
+            assigned_rrh += 1
+
+    return assigned_rrh
 
 
 def log_unassigned_rrhs(remaining_rrhs, bbu_pools, config):
@@ -155,17 +165,18 @@ def balance_rrh_distribution(bbu_pools, config):
     # Step 1: Calculate the target number of RRHs per BBU
     total_rrhs = sum(len(pool.connected_rrh) for pool in bbu_pools)
     target_rrhs_per_bbu = min(config.num_RRHs_per_BBU, max(1, int(np.ceil(total_rrhs / len(bbu_pools)))))
-
+    print(f"The target RRHs per BBU are: {target_rrhs_per_bbu}")
     # Step 2: Identify overloaded and underloaded BBUs
     overloaded_pools = [pool for pool in bbu_pools if len(pool.connected_rrh) > target_rrhs_per_bbu]
     underloaded_pools = [pool for pool in bbu_pools if len(pool.connected_rrh) < target_rrhs_per_bbu]
-
+    unassigned_rrhs = []
     # Step 3: Reassign RRHs to balance the load
     for overloaded_pool in overloaded_pools:
         while len(overloaded_pool.connected_rrh) > target_rrhs_per_bbu and underloaded_pools:
+            # print(len(overloaded_pool.connected_rrh))
             # Remove excess RRH from overloaded pool
             rrh_to_reassign = overloaded_pool.connected_rrh.pop()
-
+            found = False
             # Find a suitable underloaded BBU pool
             for underloaded_pool in underloaded_pools:
                 distance = haversine(
@@ -174,20 +185,42 @@ def balance_rrh_distribution(bbu_pools, config):
                     underloaded_pool.latitude,
                     underloaded_pool.longitude
                 )
-
                 # Check if the RRH can be reassigned to the underloaded pool
                 if (
                         distance <= config.coverage_radius and
                         len(underloaded_pool.connected_rrh) < target_rrhs_per_bbu
                 ):
                     underloaded_pool.connected_rrh.append(rrh_to_reassign)
+                    found = True
                     break
+            if not found:
+                print("Not found this time")
+                for overloaded_pool_inside in overloaded_pools:
+                    if overloaded_pool_inside == overloaded_pool:
+                        continue
+                    distance = haversine(
+                        rrh_to_reassign['latitude'],
+                        rrh_to_reassign['longitude'],
+                        overloaded_pool_inside.latitude,
+                        overloaded_pool_inside.longitude
+                    )
+                    # Check if the RRH can be reassigned to the underloaded pool
+                    if (
+                            distance <= config.coverage_radius and
+                            len(overloaded_pool_inside.connected_rrh) < target_rrhs_per_bbu
+                    ):
+                        overloaded_pool_inside.connected_rrh.append(rrh_to_reassign)
+                        found = True
+                        break
+            if not found:
+                unassigned_rrhs.append(rrh_to_reassign)
 
             # Update underloaded pools list
             underloaded_pools = [
                 pool for pool in underloaded_pools
                 if len(pool.connected_rrh) < target_rrhs_per_bbu
             ]
+    return pd.DataFrame(unassigned_rrhs)
 
 
 def optimize_bbu_pools_with_constraints(rrhs_df, config):
@@ -225,13 +258,19 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
 
     # Remove unused RRHs (those not in any pool)
     remaining_rrhs = rrhs_df[~rrhs_df.index.isin(used_rrhs)]
-
+    print(f"Remaining RRHs without connected BBUs: {len(remaining_rrhs)}")
     # Optionally: Handle remaining RRHs by assigning to nearby pools if possible
-    assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config)
-    remaining_rrhs = rrhs_df[~rrhs_df.index.isin(used_rrhs)]
+    assigned_rrhs_1 = assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config)
+    print(f"Remaining RRHs without connected BBUs after 1st assignment: {len(remaining_rrhs)-assigned_rrhs_1}")
+
     # Balance rrh distribution
-    # balance_rrh_distribution(bbu_pools, config)
-    print("The number of unassigned rrhs is: ", len(log_unassigned_rrhs(remaining_rrhs, bbu_pools, config)))
+    unassigned_rrhs = balance_rrh_distribution(bbu_pools, config)
+    print(f"Remaining RRHs without connected BBUs after balance: {len(remaining_rrhs)-assigned_rrhs_1 + 
+                                                                  len(unassigned_rrhs)}")
+    assigned_rrhs_2 = assign_remaining_rrhs_to_pools(unassigned_rrhs, bbu_pools, config)
+    print(f"Remaining RRHs without connected BBUs after 2nd assignment: {len(remaining_rrhs) - assigned_rrhs_1 +
+                                                                  len(unassigned_rrhs) - assigned_rrhs_2}")
+    print("The number of final  unasignable rrhs is: ", len(log_unassigned_rrhs(remaining_rrhs, bbu_pools, config)))
     return bbu_pools
 
 
@@ -246,21 +285,23 @@ def adjust_bbu_location(center, existing_pools, rrhs, config):
     return center
 
 
-def randomize_residential_office(config):
-    random_value = random.random()
-    color = "orange"
-    # For the mixed ones
-    if random_value <= config.percentage_RRH_mixed / 100:
-        color = "orange"
-    # For the ones that are for office
-    elif (config.percentage_RRH_mixed / 100) < random_value <= (
-            (config.percentage_RRH_mixed / 100) + config.percentage_RRH_office / 100):
-        color = "blue"
-    # For the residential ones
-    elif ((config.percentage_RRH_mixed / 100 + config.percentage_RRH_office / 100) <
-          random_value <= 1):
-        color = "green"
-    return color
+def randomize_residential_office(config, df):
+    def assign_type(_):
+        random_value = random.random()
+        # For the mixed ones
+        if random_value <= config.percentage_RRH_mixed / 100:
+            return "mixed"
+        # For the ones that are for office
+        elif (config.percentage_RRH_mixed / 100) < random_value <= (
+                (config.percentage_RRH_mixed / 100) + config.percentage_RRH_office / 100):
+            return "office"
+        # For the residential ones
+        elif ((config.percentage_RRH_mixed / 100 + config.percentage_RRH_office / 100) <
+              random_value <= 1):
+            return "residential"
+
+    df['type'] = df.apply(assign_type, axis=1)
+    return df
 
 
 def main():
@@ -275,12 +316,13 @@ def main():
     # Split 'ns1:coordinates' and extract longitude, latitude
     df[['longitude', 'latitude', 'altitude']] = (
         df['ns1:coordinates'].str.split(",", expand=True)[[0, 1, 2]].astype(float))
-
+    df = randomize_residential_office(config, df)
     # Create point geometry using longitude and latitude
     geometry = [Point(xy) for xy in zip(df['longitude'], df['latitude'])]
+
     gdf = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
 
-    rrhs_df = df[['latitude', 'longitude']].copy()
+    rrhs_df = df[['latitude', 'longitude', 'type']].copy()
     rrhs_df['id'] = df['ns1:name9']
     # Place the BBU pools
     bbu_pools = optimize_bbu_pools_with_constraints(rrhs_df, config)
@@ -292,12 +334,19 @@ def main():
     initial_map = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
     for idx, row in gdf.iterrows():
+        color_marker = 'black'
+        if row['type'] == "mixed":
+            color_marker = 'orange'
+        elif row['type'] == "office":
+            color_marker = 'blue'
+        elif row['type'] == "residential":
+            color_marker = 'green'
         # print([row['latitude'], row['longitude']])
         folium.Marker(
             icon=folium.Icon(icon="tower-cell", prefix="fa",
-                             color=randomize_residential_office(config), icon_color="black"),
+                             color=color_marker, icon_color="black"),
             location=[row['latitude'], row['longitude']],
-            popup=f"Name: {row.get('ns1:name9', '')}, Altitude: {row['altitude']} m"
+            popup=f"Name: {row.get('ns1:name9', '')}, Altitude: {row['altitude']} m, Type: {row['type']}"
         ).add_to(initial_map)
         # Add BBU pools to the map
     # print(bbu_pools)
@@ -333,7 +382,8 @@ def main():
     # Plot the results
     plot_rrhs_per_bbu(bbu_pools)
     plot_distance_histogram(bbu_pools)
-    plot_scatter_bbu_rrh(bbu_pools)
+    # plot_scatter_bbu_rrh(bbu_pools)
+    plot_rrh_type_distribution(rrhs_df)
     plot_distance_boxplot(bbu_pools)
     print("BBU details saved to bbu_details.csv")
 
