@@ -10,8 +10,75 @@ from sklearn.cluster import KMeans
 import numpy as np
 import random
 import folium
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
 
 
+# Plotting functions
+def plot_rrhs_per_bbu(bbu_pools):
+    """Bar chart showing the number of RRHs connected to each BBU."""
+    bbu_ids = [pool.identifier for pool in bbu_pools]
+    rrh_counts = [len(pool.connected_rrh) for pool in bbu_pools]
+
+    plt.figure(figsize=(10, 6))
+    plt.bar(bbu_ids, rrh_counts, color='skyblue')
+    plt.xlabel('BBU ID')
+    plt.ylabel('Number of Connected RRHs')
+    plt.title('Number of RRHs Connected to Each BBU')
+    plt.xticks(bbu_ids)
+    plt.show()
+
+
+def plot_distance_histogram(bbu_pools):
+    """Histogram of distances between BBUs and their connected RRHs."""
+    distances = []
+    for pool in bbu_pools:
+        for rrh in pool.connected_rrh:
+            dist = haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude'])
+            distances.append(dist)
+
+    plt.figure(figsize=(10, 6))
+    plt.hist(distances, bins=20, color='orange', edgecolor='black')
+    plt.xlabel('Distance (meters)')
+    plt.ylabel('Frequency')
+    plt.title('Distribution of Distances Between BBUs and Connected RRHs')
+    plt.show()
+
+
+def plot_scatter_bbu_rrh(bbu_pools):
+    """Scatter plot showing the geographic distribution of BBUs and RRHs."""
+    bbu_coords = [(pool.latitude, pool.longitude) for pool in bbu_pools]
+    rrh_coords = [(rrh['latitude'], rrh['longitude']) for pool in bbu_pools for rrh in pool.connected_rrh]
+
+    bbu_lats, bbu_lons = zip(*bbu_coords)
+    rrh_lats, rrh_lons = zip(*rrh_coords)
+
+    plt.figure(figsize=(10, 6))
+    plt.scatter(rrh_lons, rrh_lats, c='blue', label='RRHs', alpha=0.6)
+    plt.scatter(bbu_lons, bbu_lats, c='red', label='BBUs', marker='x', s=100)
+    plt.xlabel('Longitude')
+    plt.ylabel('Latitude')
+    plt.title('Geographic Distribution of BBUs and RRHs')
+    plt.legend()
+    plt.show()
+
+
+def plot_distance_boxplot(bbu_pools):
+    """Boxplot showing distance variability per BBU."""
+    distances = {pool.identifier: [haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude'])
+                                   for rrh in pool.connected_rrh]
+                 for pool in bbu_pools}
+
+    distance_df = pd.DataFrame(dict([(key, pd.Series(value)) for key, value in distances.items()]))
+    distance_df.boxplot(figsize=(12, 6), grid=False)
+    plt.xlabel('BBU ID')
+    plt.ylabel('Distance (meters)')
+    plt.title('Distance Variability Between BBUs and Connected RRHs')
+    plt.show()
+
+
+# Export to csv
 def export_bbu_details_to_csv(bbu_pools, output_file="bbu_details.csv"):
     data = []
     for pool in bbu_pools:
@@ -48,37 +115,6 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * c
 
 
-# Function to place BBU pools
-# def place_bbu_pools(rrhs_df, config):
-#     bbu_pools = []
-#     remaining_rrhs = rrhs_df.copy()
-#     identifier = 1
-#     while not remaining_rrhs.empty and len(bbu_pools) < config.num_BBU_pools:
-#         # Select the first RRH as the base location for the BBU pool
-#         first_rrh = remaining_rrhs.iloc[0]
-#         bbu_location = (first_rrh['latitude'], first_rrh['longitude'])
-#
-#         bbu_pool = BBUPool(identifier, bbu_location[0], bbu_location[1], [])
-#
-#         # Find and connect nearby RRHs
-#         for _, rrh in remaining_rrhs.iterrows():
-#             distance = haversine(bbu_location[0], bbu_location[1], rrh['latitude'], rrh['longitude'])
-#             if distance <= config.coverage_radius and len(bbu_pool.connected_rrh) < config.num_RRHs_per_BBU:
-#                 bbu_pool.connected_rrh.append(rrh)
-#         # Add the new BBU pool to the list
-#         bbu_pools.append(bbu_pool)
-#         identifier += 1
-#         # Remove connected RRHs from the remaining list
-#         connected_indices = [rrh.name for rrh in bbu_pool.connected_rrh]
-#         remaining_rrhs = remaining_rrhs.drop(index=connected_indices)
-#
-#         # Ensure BBU pools are at least 1.5 km apart
-#         for pool in bbu_pools:
-#             for _, rrh in remaining_rrhs.iterrows():
-#                 if haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude']) < 1500:
-#                     remaining_rrhs = remaining_rrhs[remaining_rrhs['latitude'] != rrh['latitude']]
-#
-#     return bbu_pools
 def assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config):
     for _, rrh in remaining_rrhs.iterrows():
         # Find the nearest BBU pool within coverage radius and with available capacity
@@ -194,7 +230,7 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
     assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config)
     remaining_rrhs = rrhs_df[~rrhs_df.index.isin(used_rrhs)]
     # Balance rrh distribution
-    balance_rrh_distribution(bbu_pools, config)
+    # balance_rrh_distribution(bbu_pools, config)
     print("The number of unassigned rrhs is: ", len(log_unassigned_rrhs(remaining_rrhs, bbu_pools, config)))
     return bbu_pools
 
@@ -294,6 +330,11 @@ def main():
     initial_map.save("map_antennas.html")
     # Save BBU details to a CSV
     export_bbu_details_to_csv(bbu_pools, output_file="bbu_details.csv")
+    # Plot the results
+    plot_rrhs_per_bbu(bbu_pools)
+    plot_distance_histogram(bbu_pools)
+    plot_scatter_bbu_rrh(bbu_pools)
+    plot_distance_boxplot(bbu_pools)
     print("BBU details saved to bbu_details.csv")
 
 
