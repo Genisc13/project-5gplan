@@ -38,19 +38,43 @@ def plot_rrh_type_distribution(df):
     plt.show()
 
 
-def plot_distance_histogram(bbu_pools):
-    """Histogram of distances between BBUs and their connected RRHs."""
+def plot_distance_histogram(bbu_pools, frequency_ylim=None):
+    """Histogram of distances with scaled cumulative percentage line and independent y-axis limits."""
     distances = []
     for pool in bbu_pools:
         for rrh in pool.connected_rrh:
             dist = haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude'])
             distances.append(dist)
 
-    plt.figure(figsize=(10, 6))
-    plt.hist(distances, bins=40, color='orange', edgecolor='black')
-    plt.xlabel('Distance (meters)')
-    plt.ylabel('Frequency')
-    plt.title('Distribution of Distances Between BBUs and Connected RRHs')
+    distances = np.array(distances)
+
+    # Create the figure and primary axis for the histogram
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    counts, bins, _ = ax1.hist(distances, bins=40, color='orange', edgecolor='black', alpha=0.7, label='Frequency')
+
+    # Adjust y-axis limits for the histogram (primary y-axis)
+    if frequency_ylim:
+        ax1.set_ylim(0, frequency_ylim)
+
+    # Add labels and legend for the histogram
+    ax1.set_xlabel('Distance (meters)')
+    ax1.set_ylabel('Frequency')
+    ax1.set_title('Distribution of Distances Between BBUs and Connected RRHs')
+    ax1.legend(loc='upper left')
+
+    # Create the cumulative percentage line (secondary axis)
+    cumulative = np.cumsum(counts)
+    ax2 = ax1.twinx()  # Create a twin y-axis
+    ax2.plot(0.5 * (bins[1:] + bins[:-1]), cumulative / cumulative[-1] * 100, color='blue', linestyle='-',
+             linewidth=2, label='Cumulative (%)')
+
+    # Set the secondary y-axis for percentage
+    ax2.set_ylabel('Cumulative Percentage (%)')
+    ax2.set_ylim(0, 100)  # Percentage always ranges from 0 to 100
+
+    # Add a legend for the cumulative line
+    ax2.legend(loc='upper right')
+
     plt.show()
 
 
@@ -166,17 +190,34 @@ def balance_rrh_distribution(bbu_pools, config):
     total_rrhs = sum(len(pool.connected_rrh) for pool in bbu_pools)
     target_rrhs_per_bbu = min(config.num_RRHs_per_BBU, max(1, int(np.ceil(total_rrhs / len(bbu_pools)))))
     print(f"The target RRHs per BBU are: {target_rrhs_per_bbu}")
+
     # Step 2: Identify overloaded and underloaded BBUs
     overloaded_pools = [pool for pool in bbu_pools if len(pool.connected_rrh) > target_rrhs_per_bbu]
     underloaded_pools = [pool for pool in bbu_pools if len(pool.connected_rrh) < target_rrhs_per_bbu]
     unassigned_rrhs = []
+
     # Step 3: Reassign RRHs to balance the load
     for overloaded_pool in overloaded_pools:
+        # Sort connected RRHs by their distance from the BBU, in descending order
+        overloaded_pool.connected_rrh.sort(
+            key=lambda rrh: haversine(
+                rrh['latitude'], rrh['longitude'],
+                overloaded_pool.latitude, overloaded_pool.longitude
+            ),
+            reverse=True  # Prioritize further RRHs
+        )
+
         while len(overloaded_pool.connected_rrh) > target_rrhs_per_bbu and underloaded_pools:
-            # print(len(overloaded_pool.connected_rrh))
-            # Remove excess RRH from overloaded pool
+            # Remove the furthest RRH from the overloaded pool
             rrh_to_reassign = overloaded_pool.connected_rrh.pop()
             found = False
+            underloaded_pools.sort(
+                key=lambda under_load_pool: haversine(
+                    rrh_to_reassign['latitude'], rrh_to_reassign['longitude'],
+                    under_load_pool.latitude, under_load_pool.longitude
+                ),
+                reverse=False  # Prioritize nearer underloaded pools
+            )
             # Find a suitable underloaded BBU pool
             for underloaded_pool in underloaded_pools:
                 distance = haversine(
@@ -193,8 +234,9 @@ def balance_rrh_distribution(bbu_pools, config):
                     underloaded_pool.connected_rrh.append(rrh_to_reassign)
                     found = True
                     break
+
             if not found:
-                print("Not found this time")
+                # Try to reassign within overloaded pools if possible
                 for overloaded_pool_inside in overloaded_pools:
                     if overloaded_pool_inside == overloaded_pool:
                         continue
@@ -204,7 +246,6 @@ def balance_rrh_distribution(bbu_pools, config):
                         overloaded_pool_inside.latitude,
                         overloaded_pool_inside.longitude
                     )
-                    # Check if the RRH can be reassigned to the underloaded pool
                     if (
                             distance <= config.coverage_radius and
                             len(overloaded_pool_inside.connected_rrh) < target_rrhs_per_bbu
@@ -212,7 +253,9 @@ def balance_rrh_distribution(bbu_pools, config):
                         overloaded_pool_inside.connected_rrh.append(rrh_to_reassign)
                         found = True
                         break
+
             if not found:
+                # Add to unassigned RRHs if no suitable BBU is found
                 unassigned_rrhs.append(rrh_to_reassign)
 
             # Update underloaded pools list
@@ -220,6 +263,7 @@ def balance_rrh_distribution(bbu_pools, config):
                 pool for pool in underloaded_pools
                 if len(pool.connected_rrh) < target_rrhs_per_bbu
             ]
+
     return pd.DataFrame(unassigned_rrhs)
 
 
@@ -261,15 +305,15 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
     print(f"Remaining RRHs without connected BBUs: {len(remaining_rrhs)}")
     # Optionally: Handle remaining RRHs by assigning to nearby pools if possible
     assigned_rrhs_1 = assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config)
-    print(f"Remaining RRHs without connected BBUs after 1st assignment: {len(remaining_rrhs)-assigned_rrhs_1}")
+    print(f"Remaining RRHs without connected BBUs after 1st assignment: {len(remaining_rrhs) - assigned_rrhs_1}")
 
     # Balance rrh distribution
     unassigned_rrhs = balance_rrh_distribution(bbu_pools, config)
-    print(f"Remaining RRHs without connected BBUs after balance: {len(remaining_rrhs)-assigned_rrhs_1 + 
+    print(f"Remaining RRHs without connected BBUs after balance: {len(remaining_rrhs) - assigned_rrhs_1 +
                                                                   len(unassigned_rrhs)}")
     assigned_rrhs_2 = assign_remaining_rrhs_to_pools(unassigned_rrhs, bbu_pools, config)
     print(f"Remaining RRHs without connected BBUs after 2nd assignment: {len(remaining_rrhs) - assigned_rrhs_1 +
-                                                                  len(unassigned_rrhs) - assigned_rrhs_2}")
+                                                                         len(unassigned_rrhs) - assigned_rrhs_2}")
     print("The number of final  unasignable rrhs is: ", len(log_unassigned_rrhs(remaining_rrhs, bbu_pools, config)))
     return bbu_pools
 
@@ -381,7 +425,7 @@ def main():
     export_bbu_details_to_csv(bbu_pools, output_file="bbu_details.csv")
     # Plot the results
     plot_rrhs_per_bbu(bbu_pools)
-    plot_distance_histogram(bbu_pools)
+    plot_distance_histogram(bbu_pools, 15)
     # plot_scatter_bbu_rrh(bbu_pools)
     plot_rrh_type_distribution(rrhs_df)
     plot_distance_boxplot(bbu_pools)
