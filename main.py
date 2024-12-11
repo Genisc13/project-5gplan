@@ -323,22 +323,25 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
             longitudes = [rrh['longitude'] for rrh in pool.connected_rrh]
             pool.latitude = np.mean(latitudes)
             pool.longitude = np.mean(longitudes)
-
-    # Balance rrh distribution
-    unassigned_rrhs = balance_rrh_distribution(bbu_pools, config)
-    print(f"Remaining RRHs without connected BBUs after balance: {len(remaining_rrhs) - assigned_rrhs_1 +
-                                                                  len(unassigned_rrhs)}")
-    assigned_rrhs_2 = assign_remaining_rrhs_to_pools(unassigned_rrhs, bbu_pools, config)
-    print(f"Remaining RRHs without connected BBUs after 2nd assignment: {len(remaining_rrhs) - assigned_rrhs_1 +
-                                                                         len(unassigned_rrhs) - assigned_rrhs_2}")
-    # Step 6: Adjust BBU positions after all RRHs are connected
-    for pool in bbu_pools:
-        if pool.connected_rrh:
-            # Recalculate position
-            latitudes = [rrh['latitude'] for rrh in pool.connected_rrh]
-            longitudes = [rrh['longitude'] for rrh in pool.connected_rrh]
-            pool.latitude = np.mean(latitudes)
-            pool.longitude = np.mean(longitudes)
+    if config.test_mode == 1:
+        print("Test using uniform allocation '1' initiated")
+        # Balance rrh distribution
+        unassigned_rrhs = balance_rrh_distribution(bbu_pools, config)
+        print(f"Remaining RRHs without connected BBUs after balance: {len(remaining_rrhs) - assigned_rrhs_1 +
+                                                                      len(unassigned_rrhs)}")
+        assigned_rrhs_2 = assign_remaining_rrhs_to_pools(unassigned_rrhs, bbu_pools, config)
+        print(f"Remaining RRHs without connected BBUs after 2nd assignment: {len(remaining_rrhs) - assigned_rrhs_1 +
+                                                                             len(unassigned_rrhs) - assigned_rrhs_2}")
+        # Step 6: Adjust BBU positions after all RRHs are connected
+        for pool in bbu_pools:
+            if pool.connected_rrh:
+                # Recalculate position
+                latitudes = [rrh['latitude'] for rrh in pool.connected_rrh]
+                longitudes = [rrh['longitude'] for rrh in pool.connected_rrh]
+                pool.latitude = np.mean(latitudes)
+                pool.longitude = np.mean(longitudes)
+    if config.test_mode == 2:
+        print("Test using allocation with traffic initiated '2' initiated")
     print("The number of final  unasignable rrhs is: ", len(log_unassigned_rrhs(remaining_rrhs, bbu_pools, config)))
     return bbu_pools
 

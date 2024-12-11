@@ -4,6 +4,7 @@ class Config:
         self.coverage_radius = 9500  # in m
         self.distance_between_BBUs = 1000  # in m
         self.base_station_capacity = 10000  # in Mbps
+        self.test_mode = 0
         self.csv_uri = "antennas_kml_v2.csv"
         self.num_RRHs = 102
         self.num_RRHs_per_BBU = 25
