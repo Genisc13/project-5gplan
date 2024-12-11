@@ -280,6 +280,14 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
         # Select RRHs belonging to this cluster
         cluster_rrhs = rrhs_df[kmeans.labels_ == idx]
 
+        # Sort the RRHs by distance to the current BBU center
+        cluster_rrhs = cluster_rrhs.assign(
+            distance_to_center=cluster_rrhs.apply(
+                lambda rrh: haversine(center[0], center[1], rrh['latitude'], rrh['longitude']),
+                axis=1
+            )
+        ).sort_values(by='distance_to_center')
+
         # Step 2: Filter RRHs within coverage radius and respect RRH limit
         connected_rrhs = []
         for _, rrh in cluster_rrhs.iterrows():
@@ -300,12 +308,21 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
             ))
             used_rrhs.update([rrh.name for rrh in connected_rrhs])
 
-    # Remove unused RRHs (those not in any pool)
+    # Step 4: Assign unused RRHs (those not in any pool)
     remaining_rrhs = rrhs_df[~rrhs_df.index.isin(used_rrhs)]
     print(f"Remaining RRHs without connected BBUs: {len(remaining_rrhs)}")
-    # Optionally: Handle remaining RRHs by assigning to nearby pools if possible
+    # Step 5: Handle remaining RRHs by assigning to nearby pools if possible
     assigned_rrhs_1 = assign_remaining_rrhs_to_pools(remaining_rrhs, bbu_pools, config)
     print(f"Remaining RRHs without connected BBUs after 1st assignment: {len(remaining_rrhs) - assigned_rrhs_1}")
+
+    # Step 6: Adjust BBU positions after all RRHs are connected
+    for pool in bbu_pools:
+        if pool.connected_rrh:
+            # Recalculate position
+            latitudes = [rrh['latitude'] for rrh in pool.connected_rrh]
+            longitudes = [rrh['longitude'] for rrh in pool.connected_rrh]
+            pool.latitude = np.mean(latitudes)
+            pool.longitude = np.mean(longitudes)
 
     # Balance rrh distribution
     unassigned_rrhs = balance_rrh_distribution(bbu_pools, config)
@@ -314,6 +331,14 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
     assigned_rrhs_2 = assign_remaining_rrhs_to_pools(unassigned_rrhs, bbu_pools, config)
     print(f"Remaining RRHs without connected BBUs after 2nd assignment: {len(remaining_rrhs) - assigned_rrhs_1 +
                                                                          len(unassigned_rrhs) - assigned_rrhs_2}")
+    # Step 6: Adjust BBU positions after all RRHs are connected
+    for pool in bbu_pools:
+        if pool.connected_rrh:
+            # Recalculate position
+            latitudes = [rrh['latitude'] for rrh in pool.connected_rrh]
+            longitudes = [rrh['longitude'] for rrh in pool.connected_rrh]
+            pool.latitude = np.mean(latitudes)
+            pool.longitude = np.mean(longitudes)
     print("The number of final  unasignable rrhs is: ", len(log_unassigned_rrhs(remaining_rrhs, bbu_pools, config)))
     return bbu_pools
 
@@ -425,7 +450,7 @@ def main():
     export_bbu_details_to_csv(bbu_pools, output_file="bbu_details.csv")
     # Plot the results
     plot_rrhs_per_bbu(bbu_pools)
-    plot_distance_histogram(bbu_pools, 15)
+    plot_distance_histogram(bbu_pools, 20)
     # plot_scatter_bbu_rrh(bbu_pools)
     plot_rrh_type_distribution(rrhs_df)
     plot_distance_boxplot(bbu_pools)
