@@ -16,6 +16,205 @@ import pandas as pd
 
 
 # Plotting functions
+
+def plot_multiplexing_gain_across_scenarios(bbu_pools_by_scenario, scenario_labels, config):
+    """
+    Plot the multiplexing gain for each BBU pool across multiple scenarios in the same hour.
+    :param bbu_pools_by_scenario: List of BBU pools for each scenario.
+    :param scenario_labels: List of labels for the scenarios.
+    :param config: Configuration of the scenario hour
+    """
+    traffic_df = pd.read_csv(config.traffic_csv_uri)
+    simulation_hour = get_simulation_hour(traffic_df, config)
+    residential_max = get_max_hour(traffic_df, "residential")
+    office_max = get_max_hour(traffic_df, "office")
+    mixed_max = get_max_hour(traffic_df, "mixed")
+    print(f"Hour selected: {simulation_hour}")
+    selected_row = traffic_df.loc[traffic_df['hour'] == simulation_hour]
+    average_traffic_per_rrh = (selected_row.iloc[0]['residential'] +
+                               selected_row.iloc[0]['office'] + selected_row.iloc[0]['mixed']) / 3
+    bbu_pool_multiplexing_gains = {}  # Store multiplexing gains by BBU pool ID
+    bbu_pool_ids = []  # Store unique BBU pool IDs (for x-axis)
+
+    # Loop over each scenario
+    for scenario_idx, (bbu_pools, label) in enumerate(zip(bbu_pools_by_scenario, scenario_labels)):
+        for pool in bbu_pools:
+            # Compute total traffic for the current BBU pool in Mbps
+            total_traffic_mbps = sum(rrh['traffic'] for rrh in pool.connected_rrh)
+            maximum_possible_traffic_mbps = 0
+            for rrh in pool.connected_rrh:
+                if rrh['type'] == "residential":
+                    maximum_possible_traffic_mbps += residential_max
+                elif rrh['type'] == "office":
+                    maximum_possible_traffic_mbps += office_max
+                elif rrh['type'] == "mixed":
+                    maximum_possible_traffic_mbps += mixed_max
+            # Compute the number of RRHs connected to the pool
+            num_rrhs = len(pool.connected_rrh)
+
+            if num_rrhs > 0:
+                # Calculate the actual traffic capacity per RRH (in Mbps)
+                actual_capacity_mbps = total_traffic_mbps
+
+                # Calculate the theoretical traffic capacity for the pool (ideal capacity)
+                expected_capacity_mbps = maximum_possible_traffic_mbps
+
+                # Calculate the multiplexing gain
+                multiplexing_gain = expected_capacity_mbps / actual_capacity_mbps if expected_capacity_mbps > 0 else 0
+
+                # Store the multiplexing gain for each BBU pool (by ID) and scenario
+                if pool.identifier not in bbu_pool_multiplexing_gains:
+                    bbu_pool_multiplexing_gains[pool.identifier] = []
+                    bbu_pool_ids.append(pool.identifier)
+
+                bbu_pool_multiplexing_gains[pool.identifier].append(multiplexing_gain)
+
+    # Plotting the BBU pool multiplexing gains for each scenario
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Define the bar width and the spacing between bars
+    bar_width = 0.2
+    x_positions = np.arange(len(bbu_pool_ids))  # Positions for the x-axis (BBU pool IDs)
+
+    # Plot the bars for each scenario
+    for i, label in enumerate(scenario_labels):
+        # Extract the multiplexing gains for the current scenario
+        scenario_multiplexing_gains = [
+            bbu_pool_multiplexing_gains[bbu_id][i] if i < len(bbu_pool_multiplexing_gains[bbu_id]) else 0
+            for bbu_id in bbu_pool_ids]
+
+        # Plot the bars for this scenario
+        ax.bar(x_positions + i * bar_width, scenario_multiplexing_gains, width=bar_width, label=label)
+
+    # Add labels and title
+    ax.set_xlabel('BBU Pool ID')
+    ax.set_ylabel('Multiplexing Gain')
+    ax.set_title('Multiplexing Gain Across BBU Pools and Scenarios')
+    ax.set_xticks(x_positions + bar_width * (len(scenario_labels) - 1) / 2)  # Center the x-ticks
+    ax.set_xticklabels(bbu_pool_ids)
+
+    # Add a legend
+    ax.legend(title="Scenarios")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_average_bbu_pool_capacity_across_scenarios(bbu_pools_by_scenario, scenario_labels):
+    """
+    Plot the average traffic capacity (in GB/h) per RRH for each BBU pool across multiple scenarios.
+    :param bbu_pools_by_scenario: List of BBU pools for each scenario.
+    :param scenario_labels: List of labels for the scenarios.
+    """
+    bbu_pool_capacities = {}  # Store BBU pool capacities by BBU pool ID
+    bbu_pool_ids = []  # Store unique BBU pool IDs (for x-axis)
+
+    # Loop over each scenario
+    for scenario_idx, (bbu_pools, label) in enumerate(zip(bbu_pools_by_scenario, scenario_labels)):
+        for pool in bbu_pools:
+            # Compute total traffic for the current BBU pool in Mbps
+            total_traffic_mbps = sum(rrh['traffic'] for rrh in pool.connected_rrh)
+
+            # Compute the number of RRHs connected to the pool
+            num_rrhs = len(pool.connected_rrh)
+
+            if num_rrhs > 0:
+                # Calculate the average traffic capacity per RRH (in Mbps)
+                average_capacity_mbps = total_traffic_mbps
+                # print(average_capacity_mbps)
+
+                # Convert from Mbps to GB/h: Traffic in GB/h = (Average Capacity in Mbps * 3600) / (8 * 1000)
+                average_capacity_gb_per_hour = (average_capacity_mbps * 3600) / (8 * 1000)
+
+                # Store the average capacity for each BBU pool (by ID) and scenario
+                if pool.identifier not in bbu_pool_capacities:
+                    bbu_pool_capacities[pool.identifier] = []
+                    bbu_pool_ids.append(pool.identifier)
+
+                bbu_pool_capacities[pool.identifier].append(average_capacity_gb_per_hour)
+
+    # Plotting the BBU pool average capacities for each scenario
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Define the bar width and the spacing between bars
+    bar_width = 0.2
+    x_positions = np.arange(len(bbu_pool_ids))  # Positions for the x-axis (BBU pool IDs)
+
+    # Plot the bars for each scenario
+    for i, label in enumerate(scenario_labels):
+        # Extract the average capacities for the current scenario
+        scenario_capacities = [bbu_pool_capacities[bbu_id][i] if i < len(bbu_pool_capacities[bbu_id]) else 0
+                               for bbu_id in bbu_pool_ids]
+
+        # Plot the bars for this scenario
+        ax.bar(x_positions + i * bar_width, scenario_capacities, width=bar_width, label=label)
+
+    # Add labels and title
+    ax.set_xlabel('BBU Pool ID')
+    ax.set_ylabel('Average BBU Pool Capacity (GB/h)')
+    ax.set_title('Average BBU Pool Capacities Across Scenarios')
+    ax.set_xticks(x_positions + bar_width * (len(scenario_labels) - 1) / 2)  # Center the x-ticks
+    ax.set_xticklabels(bbu_pool_ids)
+
+    # Add a legend
+    ax.legend(title="Scenarios")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def track_rrh_reassignments(bbu_pools_by_hour, hours):
+    """
+    Track how many RRHs change their BBU assignment between different hours, including non-consecutive pairs.
+    :param bbu_pools_by_hour: List of BBU pool assignments for each hour (e.g., [pools_8am, pools_3pm, pools_9pm]).
+    :param hours: List of hours corresponding to the BBU pool assignments (e.g., [8, 15, 21]).
+    :return: DataFrame with the number of RRHs that change assignments between each pair of hours.
+    """
+    # Extract RRH-to-BBU mappings for each hour
+    rrh_assignments = []
+    for pools in bbu_pools_by_hour:
+        assignment = {}
+        for pool in pools:
+            for rrh in pool.connected_rrh:
+                assignment[rrh['id']] = pool.identifier  # Assign RRH to its BBU
+        rrh_assignments.append(assignment)
+
+    # Compare assignments between all relevant hour pairs
+    reassignment_counts = []
+    hour_pairs = []
+    for i in range(len(rrh_assignments) - 1):
+        # Compare consecutive hour pairs
+        current = rrh_assignments[i]
+        next_ = rrh_assignments[i + 1]
+        reassignments = sum(1 for rrh_id in current if rrh_id in next_ and current[rrh_id] != next_[rrh_id])
+        reassignment_counts.append(reassignments)
+        hour_pairs.append(f"{hours[i]}-{hours[i + 1]}")
+
+    # Add comparison for non-consecutive hours (e.g., 8-21)
+    first = rrh_assignments[0]
+    last = rrh_assignments[-1]
+    reassignments_8_21 = sum(1 for rrh_id in first if rrh_id in last and first[rrh_id] != last[rrh_id])
+    reassignment_counts.append(reassignments_8_21)
+    hour_pairs.append(f"{hours[0]}-{hours[-1]}")
+
+    # Create a table summarizing the changes
+    df_reassignments = pd.DataFrame({
+        "Hour Pair": hour_pairs,
+        "RRHs Changed": reassignment_counts
+    })
+
+    # Plot changes as a bar chart
+    plt.figure(figsize=(8, 5))
+    plt.bar(df_reassignments["Hour Pair"], df_reassignments["RRHs Changed"], color='skyblue', edgecolor='black')
+    plt.xlabel("Hour Pair")
+    plt.ylabel("Number of RRHs Changed")
+    plt.title("RRH Reassignments Between Hours")
+    plt.tight_layout()
+    plt.show()
+
+    return df_reassignments
+
+
 def plot_rrh_distribution_by_type(bbu_pools):
     """
     Generate a bar chart showing the number of connected RRHs by type for each BBU.
@@ -187,6 +386,92 @@ def plot_distance_histogram(bbu_pools, frequency_ylim=None):
     # Add a legend for the cumulative line
     ax2.legend(loc='upper right')
 
+    plt.show()
+
+
+def plot_distance_histogram_across_scenarios(bbu_pools_by_scenario, scenario_labels, frequency_ylim=None):
+    """
+    Plot a histogram of distances and cumulative percentage for multiple scenarios.
+    :param bbu_pools_by_scenario: List of BBU pools for each scenario.
+    :param scenario_labels: List of labels for the scenarios.
+    :param frequency_ylim: Optional limit for the histogram y-axis.
+    """
+    colors = ['orange', 'blue', 'green', 'red']  # Define colors for scenarios
+    markers = ['o', 's', 'D', '^']  # Define markers for cumulative lines
+    fig, ax1 = plt.subplots(figsize=(12, 8))
+    ax2 = ""
+
+    # Define the bin edges for the histogram
+    bin_edges = np.arange(0, 11000, 1000)  # 0-1 km, 1-2 km, ..., 10-11 km
+    interval_centers = (bin_edges[:-1] + bin_edges[1:]) / 2  # Midpoints of each interval
+
+    # Bar width and offset for spacing
+    bar_width = 500
+    bar_offset = bar_width / len(scenario_labels)
+
+    frequency_handles = []  # Store frequency bar handles for the legend
+    cumulative_handles = []  # Store cumulative line handles for the legend
+
+    for i, (bbu_pools, label) in enumerate(zip(bbu_pools_by_scenario, scenario_labels)):
+        # Compute distances
+        distances = []
+        for pool in bbu_pools:
+            for rrh in pool.connected_rrh:
+                dist = haversine(pool.latitude, pool.longitude, rrh['latitude'], rrh['longitude'])
+                distances.append(dist)
+
+        distances = np.array(distances)
+
+        if len(distances) == 0:
+            print(f"No valid distances for scenario '{label}'")
+            continue
+
+        # Histogram and cumulative data
+        counts, bins = np.histogram(distances, bins=bin_edges)  # Use predefined bin edges
+        cumulative = np.cumsum(counts)
+
+        # Plot histogram (grouped bars with spacing)
+        bars = ax1.bar(interval_centers + i * bar_offset - (len(scenario_labels) - 1) * bar_offset / 2,  # Centering
+                       counts, width=bar_width / len(scenario_labels), color=colors[i % len(colors)], alpha=0.7,
+                       edgecolor='black', label=f'{label} (Frequency)')
+
+        # Save handle for frequency legend
+        frequency_handles.append(bars)
+
+        # Adjust histogram y-axis limits
+        if frequency_ylim:
+            ax1.set_ylim(0, frequency_ylim)
+
+        # Add labels for the histogram
+        ax1.set_xlabel('Distance Intervals (km)')
+        ax1.set_ylabel('Frequency')
+        ax1.set_title('Distribution of Distances Across Scenarios')
+
+        ax2 = ax1.twinx()
+        # Plot cumulative line (secondary y-axis)
+        line, = ax2.plot(interval_centers, cumulative / cumulative[-1] * 100,
+                         linestyle='-', linewidth=2, color=colors[i % len(colors)], marker=markers[i % len(markers)],
+                         label=f'{label} (Cumulative %)')
+
+        # Save handle for cumulative legend
+        cumulative_handles.append(line)
+
+        # Set cumulative percentage y-axis limits
+        ax2.set_ylim(0, 100)
+        ax2.set_ylabel('Cumulative Percentage (%)')
+
+    # Format the x-axis with intervals
+    interval_labels = [f"{int(bin_edges[i] / 1000)}-{int(bin_edges[i + 1] / 1000)} km" for i in
+                       range(len(bin_edges) - 1)]
+    ax1.set_xticks(interval_centers)
+    ax1.set_xticklabels(interval_labels, rotation=45)
+
+    # Combine legends
+    frequency_legend = ax1.legend(handles=frequency_handles, loc='upper left', title='Frequency')
+    cumulative_legend = ax2.legend(handles=cumulative_handles, loc='upper right', title='Cumulative')
+
+    # Finalize layout
+    plt.tight_layout()
     plt.show()
 
 
@@ -490,14 +775,13 @@ def optimize_bbu_pools_with_constraints(rrhs_df, config):
     bbu_pools = []
     used_rrhs = set()
     selected_row = -1
-    if config.test_mode == 2 or 3:
-        print("Test using allocation with traffic initiated '2 or 3' initiated")
-        traffic_df = pd.read_csv(config.traffic_csv_uri)
-        simulation_hour = get_simulation_hour(traffic_df, config)
-        print(f"Hour selected: {simulation_hour}")
-        selected_row = traffic_df.loc[traffic_df['hour'] == simulation_hour]
-        # print(selected_row)
-        rrhs_df['traffic'] = rrhs_df['type'].apply(lambda t: selected_row.iloc[0][t])
+
+    traffic_df = pd.read_csv(config.traffic_csv_uri)
+    simulation_hour = get_simulation_hour(traffic_df, config)
+    print(f"Hour selected: {simulation_hour}")
+    selected_row = traffic_df.loc[traffic_df['hour'] == simulation_hour]
+    # print(selected_row)
+    rrhs_df['traffic'] = rrhs_df['type'].apply(lambda t: selected_row.iloc[0][t])
 
     for idx, center in enumerate(kmeans.cluster_centers_):
         # Select RRHs belonging to this cluster
@@ -609,6 +893,33 @@ def get_simulation_hour(traffic_df, config):
     else:
         print(f"Manual hour selected: {config.simulation_hour}")
         return config.simulation_hour
+
+
+def get_max_hour(traffic_df, mode="mixed"):
+    if mode == "residential":
+        bbu_columns = [col for col in traffic_df.columns if col != 'hour']
+        if not bbu_columns:
+            print("Error: No traffic columns found.")
+            return None
+        max_residential = traffic_df.loc[traffic_df['residential'].idxmax(), 'residential']
+        print(f"Maximum bandwidth residential obtained: {max_residential}")
+        return max_residential
+    elif mode == "office":
+        bbu_columns = [col for col in traffic_df.columns if col != 'hour']
+        if not bbu_columns:
+            print("Error: No traffic columns found.")
+            return None
+        max_office = traffic_df.loc[traffic_df['office'].idxmax(), 'office']
+        print(f"Maximum bandwidth office obtained: {max_office}")
+        return max_office
+    elif mode == "mixed":
+        bbu_columns = [col for col in traffic_df.columns if col != 'hour']
+        if not bbu_columns:
+            print("Error: No traffic columns found.")
+            return None
+        max_mixed = traffic_df.loc[traffic_df['mixed'].idxmax(), 'mixed']
+        print(f"Maximum bandwidth mixed obtained: {max_mixed}")
+        return max_mixed
 
 
 def adjust_bbu_location(center, existing_pools, rrhs, config):
@@ -811,11 +1122,25 @@ def main():
     vector_max_traffic = []
     vector_labels = []
     hour = 0
+    df = initialize(config)
+    config.simulation_hour = 15
     config.test_mode = 2
+    bbu_pool_distance, rrh_df_distance = test_without_plotting(config, df)
+    config.test_mode = 3
+    bbu_pool_load_balancing, rrh_df_load_balancing = test_without_plotting(config, df)
+    config.test_mode = 1
+    bbu_pool_num_rrh, rrh_df_num_rrh = test_without_plotting(config, df)
+    plot_distance_histogram_across_scenarios([bbu_pool_distance, bbu_pool_load_balancing, bbu_pool_num_rrh],
+                                              ["Minimum distance", "Load balancing", "Uniform distribution RRHs"])
+    plot_average_bbu_pool_capacity_across_scenarios([bbu_pool_distance, bbu_pool_load_balancing, bbu_pool_num_rrh],
+                                                    ["Minimum distance", "Load balancing", "Uniform distribution RRHs"])
+    plot_multiplexing_gain_across_scenarios([bbu_pool_distance, bbu_pool_load_balancing, bbu_pool_num_rrh],
+                                            ["Minimum distance", "Load balancing", "Uniform distribution RRHs"], config)
+    # track_rrh_reassignments([bbu_pool_8, bbu_pool_15, bbu_pool_21], [8, 15, 21])
     # config.percentage_RRH_mixed = 50
     # config.percentage_RRH_office = 20
     # config.percentage_RRH_residential = 30
-    df = initialize(config)
+    # df = initialize(config)
     # bbu_pools_real, rrhs_df_normal = test_without_plotting(config, df)
     # config.percentage_RRH_mixed = 0
     # config.percentage_RRH_office = 0
@@ -829,13 +1154,13 @@ def main():
     # bbu_pools_office, rrhs_df_office = test_without_plotting(config, df)
     # plot_traffic_comparison([bbu_pools_real, bbu_pools_residential, bbu_pools_office],
     #                         ["Real Scenario", "100% residential", "100% office"])
-    while hour <= 24:
-        config.simulation_hour = hour
-        bbu_pools_office, rrhs_df_office = test_without_plotting(config, df)
-        vector_max_traffic.append(bbu_pools_office)
-        vector_labels.append(str(hour))
-        hour = hour + 1
-    plot_total_traffic_across_scenarios(vector_max_traffic, vector_labels)
+    # while hour <= 24:
+    #     config.simulation_hour = hour
+    #     bbu_pools_office, rrhs_df_office = test_without_plotting(config, df)
+    #     vector_max_traffic.append(bbu_pools_office)
+    #     vector_labels.append(str(hour))
+    #     hour = hour + 1
+    # plot_total_traffic_across_scenarios(vector_max_traffic, vector_labels)
 
 
 if __name__ == "__main__":
